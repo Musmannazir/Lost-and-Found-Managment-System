@@ -1,5 +1,5 @@
 -- DROP existing tables for reset (if needed)
- --DROP TABLE IF EXISTS claims, deleted_claims, items, deleted_items, locations, admins, deleted_users, users CASCADE;
+-- DROP TABLE IF EXISTS claims, deleted_claims, items, deleted_items, locations, admins, deleted_users, users, admin_actions CASCADE;
 
 -- USERS
 CREATE TABLE users (
@@ -88,12 +88,67 @@ CREATE TABLE deleted_claims (
     deleted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+-- ADMIN ACTIONS
+CREATE TABLE admin_actions (
+    action_id SERIAL PRIMARY KEY,
+    admin_id INTEGER REFERENCES admins(admin_id) ON DELETE CASCADE,
+    action_type VARCHAR(50) NOT NULL CHECK (action_type IN ('Create', 'Update', 'Delete')),
+    action_description TEXT,
+    action_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 -- Indexes for performance
 CREATE INDEX idx_items_reported_by ON items(reported_by);
 CREATE INDEX idx_claims_item_id ON claims(item_id);
 CREATE INDEX idx_claims_claimed_by ON claims(claimed_by);
 CREATE INDEX idx_deleted_items_reported_by ON deleted_items(reported_by);
 CREATE INDEX idx_deleted_claims_claimed_by ON deleted_claims(claimed_by);
+
+-- TRIGGERS FOR ADMIN ACTIONS
+-- Trigger for deleted_items: Logs deletion of items
+CREATE OR REPLACE FUNCTION log_deleted_item_action()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO admin_actions (admin_id, action_type, action_description)
+    VALUES (1, 'Delete', 'Deleted item ID ' || COALESCE(NEW.item_id::TEXT, 'unknown') || ': ' || COALESCE(NEW.title, 'unknown'));
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER deleted_item_trigger
+AFTER INSERT ON deleted_items
+FOR EACH ROW
+EXECUTE FUNCTION log_deleted_item_action();
+
+-- Trigger for deleted_users: Logs deletion of users
+CREATE OR REPLACE FUNCTION log_deleted_user_action()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO admin_actions (admin_id, action_type, action_description)
+    VALUES (1, 'Delete', 'Deleted user ID ' || COALESCE(NEW.user_id::TEXT, 'unknown') || ': ' || COALESCE(NEW.name, 'unknown'));
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER deleted_user_trigger
+AFTER INSERT ON deleted_users
+FOR EACH ROW
+EXECUTE FUNCTION log_deleted_user_action();
+
+-- Trigger for deleted_claims: Logs deletion of claims
+CREATE OR REPLACE FUNCTION log_deleted_claim_action()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO admin_actions (admin_id, action_type, action_description)
+    VALUES (1, 'Delete', 'Deleted claim ID ' || COALESCE(NEW.claim_id::TEXT, 'unknown') || ' for item ID ' || COALESCE(NEW.item_id::TEXT, 'unknown'));
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER deleted_claim_trigger
+AFTER INSERT ON deleted_claims
+FOR EACH ROW
+EXECUTE FUNCTION log_deleted_claim_action();
 
 -- DEMO DATA INSERTIONS
 -- USERS
@@ -148,8 +203,14 @@ INSERT INTO deleted_items (item_id, title, description, date_reported, status, i
 INSERT INTO deleted_claims (claim_id, item_id, claimed_by, claim_date, status, approved_by, loss_location, loss_date, deleted_at) VALUES
 (5, 1, 3, '2025-05-05', 'Pending', NULL, 'Ground', '2025-04-18', CURRENT_TIMESTAMP); -- Charlie claimed Alice's wallet
 
+-- Sample admin actions for testing
+INSERT INTO admin_actions (admin_id, action_type, action_description) VALUES
+(1, 'Create', 'Created new user: Alice Smith'),
+(2, 'Update', 'Updated claim status for item ID 1'),
+(3, 'Delete', 'Deleted item ID 10 from records');
+
 -- Verify data
-SELECT * from admins;
+SELECT * FROM admins;
 SELECT * FROM users;
 SELECT * FROM claims;
 SELECT * FROM items;
@@ -157,3 +218,4 @@ SELECT * FROM locations;
 SELECT * FROM deleted_items;
 SELECT * FROM deleted_claims;
 SELECT * FROM deleted_users;
+SELECT * FROM admin_actions;
